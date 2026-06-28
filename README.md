@@ -120,6 +120,109 @@ dotnet test
 docker compose -f docker-compose.test.yml down
 ```
 
+## API Design
+
+Base URL: `http://localhost:5001`
+
+### POST /api/payments
+
+Process a card payment. Validates the request, authorises with the acquiring bank, persists the result, and returns the outcome.
+
+**Request**
+
+```json
+{
+  "cardNumber":   "2222405343248871",
+  "expiryMonth":  4,
+  "expiryYear":   2027,
+  "currency":     "GBP",
+  "amount":       1050,
+  "cvv":          "123"
+}
+```
+
+| Field | Type | Constraints |
+|---|---|---|
+| `cardNumber` | string | Numeric digits only, 14–19 characters |
+| `expiryMonth` | integer | 1–12 |
+| `expiryYear` | integer | Must be a future expiry (combined with month) |
+| `currency` | string | `GBP`, `USD`, or `EUR` |
+| `amount` | integer | Positive integer (minor currency units, e.g. pence) |
+| `cvv` | string | Numeric digits only, 3–4 characters |
+
+**Responses**
+
+| HTTP status | Meaning | Body |
+|---|---|---|
+| `200 OK` | Payment authorised | `PaymentResponse` |
+| `400 Bad Request` | Validation failed | `ProblemDetails` with field errors |
+| `429 Too Many Requests` | Rate limit exceeded (10 req / 60 s per IP) | `ProblemDetails` + `Retry-After` header |
+| `502 Bad Gateway` | Payment declined by bank | `PaymentResponse` with `status: "Declined"` |
+| `503 Service Unavailable` | Acquiring bank unreachable | `ProblemDetails` |
+
+**Response body (`PaymentResponse`)**
+
+```json
+{
+  "id":                "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "status":            "Authorized",
+  "cardNumberLastFour": "8871",
+  "expiryMonth":       4,
+  "expiryYear":        2027,
+  "currency":          "GBP",
+  "amount":            1050
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | UUID | Unique payment identifier for retrieval |
+| `status` | string | `Authorized` or `Declined` |
+| `cardNumberLastFour` | string | Last 4 digits only — full PAN is never stored or returned |
+| `expiryMonth` | integer | |
+| `expiryYear` | integer | |
+| `currency` | string | |
+| `amount` | integer | Minor currency units |
+
+---
+
+### GET /api/payments/{id}
+
+Retrieve a previously processed payment by its ID.
+
+**Path parameter**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `id` | UUID | The `id` returned from `POST /api/payments` |
+
+**Responses**
+
+| HTTP status | Meaning |
+|---|---|
+| `200 OK` | Payment found — returns `PaymentResponse` (same shape as POST response) |
+| `404 Not Found` | No payment with that ID exists |
+| `429 Too Many Requests` | Rate limit exceeded (60 req / 60 s per IP) |
+
+---
+
+### Error response shape
+
+All error responses use RFC 7807 `ProblemDetails`:
+
+```json
+{
+  "status":   400,
+  "title":    "One or more validation errors occurred.",
+  "instance": "/api/payments",
+  "errors": {
+    "CardNumber": ["Card number must be between 14 and 19 characters long."]
+  }
+}
+```
+
+---
+
 ## Key design decisions
 
 - **No CQRS** — two use cases (process, retrieve) don't justify the indirection.

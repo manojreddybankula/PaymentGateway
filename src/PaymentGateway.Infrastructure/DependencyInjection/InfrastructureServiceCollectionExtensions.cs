@@ -15,22 +15,30 @@ public static class InfrastructureServiceCollectionExtensions
 {
     public static void AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration["MongoDB:ConnectionString"]
-            ?? throw new InvalidOperationException("Configuration 'MongoDB:ConnectionString' is not configured.");
-        var databaseName = configuration["MongoDB:DatabaseName"]
-            ?? throw new InvalidOperationException("Configuration 'MongoDB:DatabaseName' is not configured.");
+        services.AddSingleton<IMongoClient>(provider =>
+        {
+            var config = provider.GetRequiredService<IConfiguration>();
+            var connectionString = config["MongoDB:ConnectionString"]
+                ?? throw new InvalidOperationException("Configuration 'MongoDB:ConnectionString' is not configured.");
+            return new MongoClient(connectionString);
+        });
 
-        var mongoClient = new MongoClient(connectionString);
-        var database = mongoClient.GetDatabase(databaseName);
-        var paymentsCollection = database.GetCollection<PaymentDocument>("payments");
+        services.AddSingleton(provider =>
+        {
+            var config = provider.GetRequiredService<IConfiguration>();
+            var databaseName = config["MongoDB:DatabaseName"]
+                ?? throw new InvalidOperationException("Configuration 'MongoDB:DatabaseName' is not configured.");
+            return provider.GetRequiredService<IMongoClient>()
+                .GetDatabase(databaseName)
+                .GetCollection<PaymentDocument>("payments");
+        });
 
-        services.AddSingleton<IMongoClient>(mongoClient);
-        services.AddSingleton(paymentsCollection);
         services.AddScoped<IPaymentsRepository>(provider =>
         {
             var logger = provider.GetRequiredService<ILogger<MongoPaymentsRepository>>();
+            var collection = provider.GetRequiredService<IMongoCollection<PaymentDocument>>();
             var policy = BuildMongoRetryPolicy(logger, retryCount: 3);
-            return new MongoPaymentsRepository(paymentsCollection, policy);
+            return new MongoPaymentsRepository(collection, policy);
         });
 
         var acquiringBankBaseUrl = configuration["AcquiringBank:BaseUrl"]

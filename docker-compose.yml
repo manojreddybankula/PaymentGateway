@@ -1,0 +1,54 @@
+services:
+  bank_simulator:
+    container_name: bank_simulator
+    image: bbyars/mountebank:2.8.1
+    ports:
+      - "2525:2525"
+      - "8080:8080"
+    command: --configfile /imposters/bank_simulator.ejs --allowInjection
+    volumes:
+      - type: bind
+        source: ./imposters
+        target: /imposters
+
+  mongodb:
+    container_name: mongodb
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  seq:
+    container_name: seq
+    image: datalust/seq:latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINPASSWORD=YourSecurePassword123!
+    ports:
+      - "5341:5341"   # ingestion (Serilog sink target)
+      - "8081:80"     # web UI → http://localhost:8081
+    volumes:
+      - seq_data:/data
+
+  payment_gateway_api:
+    container_name: payment_gateway_api
+    build:
+      context: .
+      dockerfile: src/PaymentGateway.Api/Dockerfile
+    ports:
+      - "5001:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_HTTP_PORTS=8080
+      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - AcquiringBank__BaseUrl=http://bank_simulator:8080
+      - Serilog__WriteTo__1__Args__serverUrl=http://seq:5341
+    depends_on:
+      - mongodb
+      - seq
+      - bank_simulator
+
+volumes:
+  mongodb_data:
+  seq_data:

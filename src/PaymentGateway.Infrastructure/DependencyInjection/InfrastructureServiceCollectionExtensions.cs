@@ -1,0 +1,77 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
+using Polly;
+using Polly.Extensions.Http;
+using PaymentGateway.Service.Contracts;
+using PaymentGateway.Infrastructure.AcquiringBank;
+using PaymentGateway.Infrastructure.Persistence.Documents;
+using PaymentGateway.Infrastructure.Persistence.Repositories;
+
+namespace PaymentGateway.Infrastructure.DependencyInjection;
+
+public static class InfrastructureServiceCollectionExtensions
+{
+    public static void AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration["MongoDB:ConnectionString"]
+            ?? throw new InvalidOperationException("Configuration 'MongoDB:ConnectionString' is not configured.");
+        var databaseName = configuration["MongoDB:DatabaseName"]
+            ?? throw new InvalidOperationException("Configuration 'MongoDB:DatabaseName' is not configured.");
+
+        var mongoClient = new MongoClient(connectionString);
+        var database = mongoClient.GetDatabase(databaseName);
+        var paymentsCollection = database.GetCollection<PaymentDocument>("payments");
+
+        services.AddSingleton<IMongoClient>(mongoClient);
+        services.AddSingleton(paymentsCollection);
+        services.AddScoped<IPaymentsRepository>(provider =>
+        {
+            var logger = provider.GetRequiredService<ILogger<MongoPaymentsRepository>>();
+            var policy = BuildMongoRetryPolicy(logger, retryCount: 3);
+            return new MongoPaymentsRepository(paymentsCollection, policy);
+        });
+
+        var acquiringBankBaseUrl = configuration["AcquiringBank:BaseUrl"]
+            ?? throw new InvalidOperationException("Configuration 'AcquiringBank:BaseUrl' is not configured.");
+
+        services.AddHttpClient<IAcquiringBankClient, AcquiringBankClient>(client =>
+        {
+            client.BaseAddress = new Uri(acquiringBankBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(10);
+        })
+        .AddPolicyHandler((provider, _) => BuildRetryPolicy(
+            provider.GetRequiredService<ILogger<AcquiringBankClient>>(),
+            retryCount: 3));
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> BuildRetryPolicy(ILogger logger, int retryCount) =>
+        HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .WaitAndRetryAsync(
+                retryCount,
+                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                onRetry: (outcome, delay, attempt, _) =>
+                {
+                    var reason = outcome.Exception?.Message
+                        ?? $"HTTP {(int?)outcome.Result?.StatusCode}";
+                    logger.LogDebug(
+                        "Acquiring bank retry {Attempt}/{RetryCount} in {Delay:F1}s — {Reason}",
+                        attempt, retryCount, delay.TotalSeconds, reason);
+                });
+
+    private static IAsyncPolicy BuildMongoRetryPolicy(ILogger logger, int retryCount) =>
+        Policy
+            .Handle<MongoConnectionException>()
+            .Or<TimeoutException>()
+            .WaitAndRetryAsync(
+                retryCount,
+                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                onRetry: (exception, delay, attempt, _) =>
+                {
+                    logger.LogWarning(
+                        "MongoDB retry {Attempt}/{RetryCount} in {Delay:F1}s — {Reason}",
+                        attempt, retryCount, delay.TotalSeconds, exception.Message);
+                });
+}

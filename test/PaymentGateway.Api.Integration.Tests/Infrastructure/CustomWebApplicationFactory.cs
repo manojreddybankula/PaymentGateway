@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
 using PaymentGateway.Api.Integration.Tests.Fakes;
+using PaymentGateway.Infrastructure.DependencyInjection;
 using PaymentGateway.Service.Contracts;
 
 namespace PaymentGateway.Api.Integration.Tests.Infrastructure;
@@ -18,19 +19,18 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.ConfigureAppConfiguration((_, configBuilder) =>
-        {
-            configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["MongoDB:ConnectionString"] = MongoConnectionString,
-                ["MongoDB:DatabaseName"] = _testDatabaseName
-            });
-        });
-
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IAcquiringBankClient>();
             services.AddSingleton<IAcquiringBankClient, FakeAcquiringBankClient>();
+
+            // PostConfigure always runs after every Configure call, guaranteeing
+            // the test connection string wins regardless of configuration timing.
+            services.PostConfigure<MongoDbOptions>(opts =>
+            {
+                opts.ConnectionString = MongoConnectionString;
+                opts.DatabaseName = _testDatabaseName;
+            });
         });
     }
 

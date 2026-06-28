@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Polly;
 using Polly.Extensions.Http;
@@ -15,21 +16,27 @@ public static class InfrastructureServiceCollectionExtensions
 {
     public static void AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        services.Configure<MongoDbOptions>(opts =>
+        {
+            opts.ConnectionString = configuration["MongoDB:ConnectionString"] ?? string.Empty;
+            opts.DatabaseName = configuration["MongoDB:DatabaseName"] ?? string.Empty;
+        });
+
         services.AddSingleton<IMongoClient>(provider =>
         {
-            var config = provider.GetRequiredService<IConfiguration>();
-            var connectionString = config["MongoDB:ConnectionString"]
-                ?? throw new InvalidOperationException("Configuration 'MongoDB:ConnectionString' is not configured.");
-            return new MongoClient(connectionString);
+            var opts = provider.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+            if (string.IsNullOrEmpty(opts.ConnectionString))
+                throw new InvalidOperationException("Configuration 'MongoDB:ConnectionString' is not configured.");
+            return new MongoClient(opts.ConnectionString);
         });
 
         services.AddSingleton(provider =>
         {
-            var config = provider.GetRequiredService<IConfiguration>();
-            var databaseName = config["MongoDB:DatabaseName"]
-                ?? throw new InvalidOperationException("Configuration 'MongoDB:DatabaseName' is not configured.");
+            var opts = provider.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+            if (string.IsNullOrEmpty(opts.DatabaseName))
+                throw new InvalidOperationException("Configuration 'MongoDB:DatabaseName' is not configured.");
             return provider.GetRequiredService<IMongoClient>()
-                .GetDatabase(databaseName)
+                .GetDatabase(opts.DatabaseName)
                 .GetCollection<PaymentDocument>("payments");
         });
 

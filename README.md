@@ -2,6 +2,16 @@
 
 An ASP.NET Core 8 payment gateway that accepts card payment requests from merchants, forwards them to an acquiring bank simulator, persists the result, and exposes retrieval by payment ID.
 
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Running the project](#running-the-project)
+- [Running the tests](#running-the-tests)
+- [API Design](#api-design)
+- [Key design decisions](#key-design-decisions)
+- [CI](#ci)
+
 ## Architecture
 
 Clean Architecture across four projects:
